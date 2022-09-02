@@ -54,6 +54,8 @@ abstract class AbstractQuery
 {
     /* Hydration mode constants */
 
+    public const HYDRATE_AUTO_OBJECT_SIMPLEOBJECT = -1;
+
     /**
      * Hydrates an object graph. This is the default behavior.
      */
@@ -119,7 +121,15 @@ abstract class AbstractQuery
      * @var string|int
      * @psalm-var string|AbstractQuery::HYDRATE_*
      */
-    protected $_hydrationMode = self::HYDRATE_OBJECT;
+    protected $_hydrationMode = self::HYDRATE_AUTO_OBJECT_SIMPLEOBJECT;
+
+    /**
+     * The best automatically determined object hydration mode.
+     *
+     * @var int
+     * @psalm-var AbstractQuery::HYDRATE_OBJECT|AbstractQuery::HYDRATE_SIMPLEOBJECT
+     */
+    protected $_autoObjectHydrationMode = self::HYDRATE_OBJECT;
 
     /** @var QueryCacheProfile|null */
     protected $_queryCacheProfile;
@@ -873,7 +883,7 @@ abstract class AbstractQuery
      *
      * @return mixed
      */
-    public function getResult($hydrationMode = self::HYDRATE_OBJECT)
+    public function getResult($hydrationMode = self::HYDRATE_AUTO_OBJECT_SIMPLEOBJECT)
     {
         return $this->execute(null, $hydrationMode);
     }
@@ -1082,7 +1092,7 @@ abstract class AbstractQuery
 
         $stmt = $this->_doExecute();
 
-        return $this->_em->newHydrator($this->_hydrationMode)->iterate($stmt, $rsm, $this->_hints);
+        return $this->_em->newHydrator($this->_hydrationMode === self::HYDRATE_AUTO_OBJECT_SIMPLEOBJECT ? $this->_autoObjectHydrationMode : $this->_hydrationMode)->iterate($stmt, $rsm, $this->_hints);
     }
 
     /**
@@ -1120,7 +1130,7 @@ abstract class AbstractQuery
 
         $stmt = $this->_doExecute();
 
-        return $this->_em->newHydrator($this->_hydrationMode)->toIterable($stmt, $rsm, $this->_hints);
+        return $this->_em->newHydrator($this->_hydrationMode === self::HYDRATE_AUTO_OBJECT_SIMPLEOBJECT ? $this->_autoObjectHydrationMode : $this->_hydrationMode)->toIterable($stmt, $rsm, $this->_hints);
     }
 
     /**
@@ -1198,7 +1208,7 @@ abstract class AbstractQuery
             throw new LogicException('Uninitialized result set mapping.');
         }
 
-        $data = $this->_em->newHydrator($this->_hydrationMode)->hydrateAll($stmt, $rsm, $this->_hints);
+        $data = $this->_em->newHydrator($this->_hydrationMode === self::HYDRATE_AUTO_OBJECT_SIMPLEOBJECT ? $this->_autoObjectHydrationMode : $this->_hydrationMode)->hydrateAll($stmt, $rsm, $this->_hints);
 
         $setCacheEntry($data);
 

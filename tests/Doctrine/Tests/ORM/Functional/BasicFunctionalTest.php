@@ -1016,7 +1016,7 @@ class BasicFunctionalTest extends OrmFunctionalTestCase
         $article = $this->_em->createQuery($dql)
                              ->setParameter(1, $article->id)
                              ->setFetchMode(CmsArticle::class, 'user', ClassMetadata::FETCH_EAGER)
-                             ->getSingleResult();
+                             ->getSingleResult(Query::HYDRATE_OBJECT);
         self::assertInstanceOf(Proxy::class, $article->user, 'It IS a proxy, ...');
         self::assertTrue($article->user->__isInitialized__, '...but its initialized!');
         $this->assertQueryCount(2);

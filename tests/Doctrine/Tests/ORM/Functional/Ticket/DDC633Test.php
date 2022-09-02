@@ -10,6 +10,7 @@ use Doctrine\ORM\Mapping\GeneratedValue;
 use Doctrine\ORM\Mapping\Id;
 use Doctrine\ORM\Mapping\OneToOne;
 use Doctrine\ORM\Proxy\Proxy;
+use Doctrine\ORM\Query;
 use Doctrine\Tests\OrmFunctionalTestCase;
 
 class DDC633Test extends OrmFunctionalTestCase
@@ -66,7 +67,7 @@ class DDC633Test extends OrmFunctionalTestCase
         $this->_em->flush();
         $this->_em->clear();
 
-        $appointments = $this->_em->createQuery('SELECT a FROM ' . __NAMESPACE__ . '\DDC633Appointment a')->getResult();
+        $appointments = $this->_em->createQuery('SELECT a FROM ' . __NAMESPACE__ . '\DDC633Appointment a')->getResult(Query::HYDRATE_OBJECT);
 
         foreach ($appointments as $eagerAppointment) {
             self::assertInstanceOf(Proxy::class, $eagerAppointment->patient);

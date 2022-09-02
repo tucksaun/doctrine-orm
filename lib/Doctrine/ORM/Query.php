@@ -295,6 +295,10 @@ final class Query extends AbstractQuery
             $this->_resultSetMapping = $this->parserResult->getResultSetMapping();
         }
 
+        if ($this->_hydrationMode === self::HYDRATE_AUTO_OBJECT_SIMPLEOBJECT) {
+            $this->_autoObjectHydrationMode = $this->_resultSetMapping->isSuitableForSimpleObjectHydration() ? self::HYDRATE_SIMPLEOBJECT : self::HYDRATE_OBJECT;
+        }
+
         // Prepare parameters
         $paramMappings = $this->parserResult->getParameterMappings();
         $paramCount    = count($this->parameters);

@@ -720,7 +720,7 @@ class SqlWalker implements TreeWalker
         }
 
         $addMetaColumns = ! $this->query->getHint(Query::HINT_FORCE_PARTIAL_LOAD) &&
-            $this->query->getHydrationMode() === Query::HYDRATE_OBJECT
+            ($this->query->getHydrationMode() === Query::HYDRATE_OBJECT || $this->query->getHydrationMode() === Query::HYDRATE_AUTO_OBJECT_SIMPLEOBJECT)
             || $this->query->getHint(Query::HINT_INCLUDE_META_COLUMNS);
 
         foreach ($this->selectedClasses as $selectedClass) {

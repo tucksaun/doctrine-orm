@@ -169,6 +169,18 @@ class ResultSetMapping
      */
     public $discriminatorParameters = [];
 
+    public function isSuitableForSimpleObjectHydration()
+    {
+        if (! $this->isSelect || $this->isMixed) {
+            return false;
+        }
+
+        return count($this->aliasMap) === 1 &&
+                ! $this->scalarMappings &&
+                count($this->indexByMap) === 0 &&
+                count($this->relationMap) === 0;
+    }
+
     /**
      * Adds an entity result to this ResultSetMapping.
      *
