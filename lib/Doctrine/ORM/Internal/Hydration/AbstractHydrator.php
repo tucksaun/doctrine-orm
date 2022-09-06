@@ -22,6 +22,8 @@ use LogicException;
 use ReflectionClass;
 use TypeError;
 
+use function array_flip;
+use function array_key_exists;
 use function array_map;
 use function array_merge;
 use function count;
@@ -134,6 +136,7 @@ abstract class AbstractHydrator
         $evm->addEventListener([Events::onClear], $this);
 
         $this->prepare();
+        $this->prepareRowMappingInfo();
 
         return new IterableResult($this);
     }
@@ -181,6 +184,7 @@ abstract class AbstractHydrator
         $evm->addEventListener([Events::onClear], $this);
 
         $this->prepare();
+        $this->prepareRowMappingInfo();
 
         while (true) {
             $row = $this->statement()->fetchAssociative();
@@ -265,6 +269,7 @@ abstract class AbstractHydrator
 
         $this->_em->getEventManager()->addEventListener([Events::onClear], $this);
         $this->prepare();
+        $this->prepareRowMappingInfo();
 
         try {
             $result = $this->hydrateAllData();
@@ -406,82 +411,170 @@ abstract class AbstractHydrator
      */
     protected function gatherRowData(array $data, array &$id, array &$nonemptyComponents)
     {
-        $rowData = ['data' => []];
+        $rowData = [
+            'ids'  => $this->gatherRowIDs($data, $id, $nonemptyComponents),
+            'data' => [],
+        ];
 
-        foreach ($data as $key => $value) {
-            $cacheKeyInfo = $this->hydrateColumnInfo($key);
+        foreach ($this->_rowMappingInfo['dql'] as $alias => $_) {
+            $rowData['data'][$alias] = $this->gatherRowDataDQL($data, $alias);
+        }
+
+        if (isset($this->_rowMappingInfo['scalars'])) {
+            $rowData['scalars'] = $this->gatherRowDataScalars($data);
+        }
+
+        if (isset($this->_rowMappingInfo['newObjects'])) {
+            $rowData['newObjects'] = $this->gatherRowDataNewObjects($data);
+        }
+
+        return $rowData;
+    }
+
+    protected $_rowMappingInfo;
+
+    protected function prepareRowMappingInfo()
+    {
+        $resultSetMapping = $this->resultSetMapping();
+
+        $rowInfo = [
+            'dql' => [],
+            'ids' => [],
+        ];
+
+        foreach ($resultSetMapping->columnOwnerMap as $column => $_) {
+            $cacheKeyInfo = $this->hydrateColumnInfo($column);
             if ($cacheKeyInfo === null) {
                 continue;
             }
 
-            $fieldName = $cacheKeyInfo['fieldName'];
+            if (! isset($cacheKeyInfo['dqlAlias'])) {
+                continue;
+            }
 
-            switch (true) {
-                case isset($cacheKeyInfo['isNewObjectParameter']):
-                    $argIndex = $cacheKeyInfo['argIndex'];
-                    $objIndex = $cacheKeyInfo['objIndex'];
-                    $type     = $cacheKeyInfo['type'];
-                    $value    = $type->convertToPHPValue($value, $this->_platform);
+            $dqlAlias = $cacheKeyInfo['dqlAlias'];
 
-                    $rowData['newObjects'][$objIndex]['class']           = $cacheKeyInfo['class'];
-                    $rowData['newObjects'][$objIndex]['args'][$argIndex] = $value;
-                    break;
+            $rowInfo['dql'][$dqlAlias][$column] = $cacheKeyInfo;
 
-                case isset($cacheKeyInfo['isScalar']):
-                    $type  = $cacheKeyInfo['type'];
-                    $value = $type->convertToPHPValue($value, $this->_platform);
-
-                    // Reimplement ReflectionEnumProperty code
-                    if ($value !== null && isset($cacheKeyInfo['enumType'])) {
-                        $enumType = $cacheKeyInfo['enumType'];
-                        if (is_array($value)) {
-                            $value = array_map(static function ($value) use ($enumType): BackedEnum {
-                                return $enumType::from($value);
-                            }, $value);
-                        } else {
-                            $value = $enumType::from($value);
-                        }
-                    }
-
-                    $rowData['scalars'][$fieldName] = $value;
-
-                    break;
-
-                //case (isset($cacheKeyInfo['isMetaColumn'])):
-                default:
-                    $dqlAlias = $cacheKeyInfo['dqlAlias'];
-                    $type     = $cacheKeyInfo['type'];
-
-                    // If there are field name collisions in the child class, then we need
-                    // to only hydrate if we are looking at the correct discriminator value
-                    if (
-                        isset($cacheKeyInfo['discriminatorColumn'], $data[$cacheKeyInfo['discriminatorColumn']])
-                        && ! in_array((string) $data[$cacheKeyInfo['discriminatorColumn']], $cacheKeyInfo['discriminatorValues'], true)
-                    ) {
-                        break;
-                    }
-
-                    // in an inheritance hierarchy the same field could be defined several times.
-                    // We overwrite this value so long we don't have a non-null value, that value we keep.
-                    // Per definition it cannot be that a field is defined several times and has several values.
-                    if (isset($rowData['data'][$dqlAlias][$fieldName])) {
-                        break;
-                    }
-
-                    $rowData['data'][$dqlAlias][$fieldName] = $type
-                        ? $type->convertToPHPValue($value, $this->_platform)
-                        : $value;
-
-                    if ($cacheKeyInfo['isIdentifier'] && $value !== null) {
-                        $id[$dqlAlias]                .= '|' . $value;
-                        $nonemptyComponents[$dqlAlias] = true;
-                    }
-
-                    break;
+            if ($cacheKeyInfo['isIdentifier']) {
+                $rowInfo['ids'][$column] = $cacheKeyInfo;
             }
         }
 
+        foreach ($resultSetMapping->scalarMappings as $column => $fieldName) {
+            if (($cacheKeyInfo = $this->hydrateColumnInfo($column)) === null) {
+                continue;
+            }
+
+            if (isset($this->_rsm->newObjectMappings[$column])) {
+                $rowInfo['newObjects'][$column] = $cacheKeyInfo;
+            } else {
+                $rowInfo['scalars'][$column] = $cacheKeyInfo;
+            }
+        }
+
+        $this->_rowMappingInfo = $rowInfo;
+    }
+
+    protected function gatherRowIDs(array $data, array &$id, array &$nonemptyComponents)
+    {
+        $ids = [];
+        foreach ($this->_rowMappingInfo['ids'] as $column => $cacheKeyInfo) {
+            $dqlAlias  = $cacheKeyInfo['dqlAlias'];
+            $fieldName = $cacheKeyInfo['fieldName'];
+
+            $ids[$dqlAlias][$fieldName] = $data[$column];
+
+            if ($data[$column] !== null) {
+                $id[$dqlAlias]                .= '|' . $data[$column];
+                $nonemptyComponents[$dqlAlias] = true;
+            }
+        }
+
+        return $ids;
+    }
+
+    protected function gatherRowDataDQL(array $data, string $dqlAlias)
+    {
+        $rowData = [];
+
+        foreach ($this->_rowMappingInfo['dql'][$dqlAlias] as $column => $cacheKeyInfo) {
+            $fieldName = $cacheKeyInfo['fieldName'];
+
+            // If there are field name collisions in the child class, then we need
+            // to only hydrate if we are looking at the correct discriminator value
+            if (
+                isset($cacheKeyInfo['discriminatorColumn'], $data[$cacheKeyInfo['discriminatorColumn']])
+                && ! isset($cacheKeyInfo['discriminatorValues'][$data[$cacheKeyInfo['discriminatorColumn']]])
+            ) {
+                continue;
+            }
+
+            // in an inheritance hierarchy the same field could be defined several times.
+            // We overwrite this value so long we don't have a non-null value, that value we keep.
+            // Per definition it cannot be that a field is defined several times and has several values.
+            if (isset($rowData[$fieldName])) {
+                continue;
+            }
+
+            // array_key_exists is more accurate as it accounts for null values
+            // but is slower so we first try a quicker version
+            if (! isset($data[$column]) && ! array_key_exists($column, $data)) {
+                continue;
+            }
+
+            $type = $cacheKeyInfo['type'];
+
+            $rowData[$fieldName] = $type
+                ? $type->convertToPHPValue($data[$column], $this->_platform)
+                : $data[$column];
+        }
+
         return $rowData;
+    }
+
+    protected function gatherRowDataScalars(array $data)
+    {
+        $scalarsData = [];
+
+        foreach ($this->_rowMappingInfo['scalars'] as $column => $cacheKeyInfo) {
+            $fieldName = $cacheKeyInfo['fieldName'];
+            $type      = $cacheKeyInfo['type'];
+            $value     = $type->convertToPHPValue($data[$column], $this->_platform);
+
+            // Reimplement ReflectionEnumProperty code
+            if ($value !== null && isset($cacheKeyInfo['enumType'])) {
+                $enumType = $cacheKeyInfo['enumType'];
+                if (is_array($value)) {
+                    $value = array_map(static function ($value) use ($enumType): BackedEnum {
+                        return $enumType::from($value);
+                    }, $value);
+                } else {
+                    $value = $enumType::from($value);
+                }
+            }
+
+            $scalarsData[$fieldName] = $value;
+        }
+
+        return $scalarsData;
+    }
+
+    protected function gatherRowDataNewObjects(array $data)
+    {
+        $newObjectsData = [];
+
+        foreach ($this->_rowMappingInfo['newObjects'] as $column => $cacheKeyInfo) {
+            $argIndex = $cacheKeyInfo['argIndex'];
+            $objIndex = $cacheKeyInfo['objIndex'];
+            $type     = $cacheKeyInfo['type'];
+            $value    = $type->convertToPHPValue($data[$column], $this->_platform);
+
+            $newObjectsData[$objIndex]['class']           = $cacheKeyInfo['class'];
+            $newObjectsData[$objIndex]['args'][$argIndex] = $value;
+        }
+
+        return $newObjectsData;
     }
 
     /**
@@ -561,7 +654,7 @@ abstract class AbstractHydrator
                         [
                             'discriminatorColumn' => $this->_rsm->discriminatorColumns[$ownerMap],
                             'discriminatorValue'  => $classMetadata->discriminatorValue,
-                            'discriminatorValues' => $this->getDiscriminatorValues($classMetadata),
+                            'discriminatorValues' => array_flip($this->getDiscriminatorValues($classMetadata)),
                         ]
                     );
                 }
