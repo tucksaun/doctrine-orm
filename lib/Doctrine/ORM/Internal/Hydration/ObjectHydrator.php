@@ -384,13 +384,14 @@ class ObjectHydrator extends AbstractHydrator
                 // Check the type of the relation (many or single-valued)
                 if (! ($relation['type'] & ClassMetadata::TO_ONE)) {
                     // PATH A: Collection-valued association
-                    $reflFieldValue = $reflField->getValue($parentObject);
 
                     if (isset($nonemptyComponents[$dqlAlias])) {
                         $collKey = $oid . $relationField;
                         if (isset($this->initializedCollections[$collKey])) {
                             $reflFieldValue = $this->initializedCollections[$collKey];
-                        } elseif (! isset($this->existingCollections[$collKey])) {
+                        } elseif (isset($this->existingCollections[$collKey])) {
+                            $reflFieldValue = $this->existingCollections[$collKey];
+                        } else {
                             $reflFieldValue = $this->initRelatedCollection($parentObject, $parentClass, $relationField, $parentAlias);
                         }
 
@@ -430,16 +431,16 @@ class ObjectHydrator extends AbstractHydrator
                             // Update result pointer
                             $resultPointers[$dqlAlias] = $reflFieldValue[$index];
                         }
-                    } elseif (! $reflFieldValue) {
+                    } elseif (! ($reflFieldValue = $reflField->getValue($parentObject))) {
                         $this->initRelatedCollection($parentObject, $parentClass, $relationField, $parentAlias);
                     } elseif ($reflFieldValue instanceof PersistentCollection && $reflFieldValue->isInitialized() === false && ! isset($this->uninitializedCollections[$oid . $relationField])) {
                         $this->uninitializedCollections[$oid . $relationField] = $reflFieldValue;
                     }
                 } else {
                     // PATH B: Single-valued association
-                    $reflFieldValue = $reflField->getValue($parentObject);
 
-                    if (! $reflFieldValue || isset($this->_hints[Query::HINT_REFRESH]) || ($reflFieldValue instanceof Proxy && ! $reflFieldValue->__isInitialized())) {
+                    // $reflField->getValue is slow so we first check if the value is isInitialized or not
+                    if (isset($this->_hints[Query::HINT_REFRESH]) || ! $reflField->isInitialized($parentObject) || ! ($reflFieldValue = $reflField->getValue($parentObject)) || ($reflFieldValue instanceof Proxy && ! $reflFieldValue->__isInitialized())) {
                         // we only need to take action if this value is null,
                         // we refresh the entity or its an uninitialized proxy.
                         if (isset($nonemptyComponents[$dqlAlias])) {
