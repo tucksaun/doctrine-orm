@@ -80,7 +80,7 @@ class DDC6303Test extends OrmFunctionalTestCase
         self::assertCount(count($persistedEntities), $entities);
 
         foreach ($entities as $entity) {
-            self::assertEquals($entity, $persistedEntities[$entity->id]);
+            self::assertEquals($persistedEntities[$entity->id], $entity);
         }
     }
 }
