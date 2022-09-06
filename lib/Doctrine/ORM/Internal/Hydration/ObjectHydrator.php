@@ -14,6 +14,7 @@ use Doctrine\ORM\UnitOfWork;
 use function array_fill_keys;
 use function array_keys;
 use function count;
+use function end;
 use function is_array;
 use function key;
 use function ltrim;
@@ -345,9 +346,6 @@ class ObjectHydrator extends AbstractHydrator
                 // It's a joined result
 
                 $parentAlias = $resultSetMapping->parentAliasMap[$dqlAlias];
-                // we need the $path to save into the identifier map which entities were already
-                // seen for this parent-child relationship
-                $path = $parentAlias . '.' . $dqlAlias;
 
                 // We have a RIGHT JOIN result here. Doctrine cannot hydrate RIGHT JOIN Object-Graphs
                 if (! isset($nonemptyComponents[$parentAlias])) {
@@ -359,6 +357,10 @@ class ObjectHydrator extends AbstractHydrator
                 $relationField = $resultSetMapping->relationMap[$dqlAlias];
                 $relation      = $parentClass->associationMappings[$relationField];
                 $reflField     = $parentClass->reflFields[$relationField];
+
+                // we need the $path to save into the identifier map which entities were already
+                // seen for this parent-child relationship
+                $path = $reflField->class . '.' . $reflField->name;
 
                 // Get a reference to the parent object to which the joined element belongs.
                 if ($resultSetMapping->isMixed && isset($this->rootAliases[$parentAlias])) {
@@ -387,50 +389,37 @@ class ObjectHydrator extends AbstractHydrator
 
                     if (isset($nonemptyComponents[$dqlAlias])) {
                         $collKey = $oid . $relationField;
-                        if (isset($this->initializedCollections[$collKey])) {
-                            $reflFieldValue = $this->initializedCollections[$collKey];
-                        } elseif (isset($this->existingCollections[$collKey])) {
-                            $reflFieldValue = $this->existingCollections[$collKey];
+
+                        if (isset($this->existingCollections[$collKey])) {
+                            // Collection exists, only look for the element in the identity map.
+                            $element = $this->getEntityFromIdentityMap($entityName, $rowData['ids'][$dqlAlias]);
                         } else {
-                            $reflFieldValue = $this->initRelatedCollection($parentObject, $parentClass, $relationField, $parentAlias);
-                        }
+                            if (isset($this->initializedCollections[$collKey])) {
+                                $reflFieldValue = $this->initializedCollections[$collKey];
+                            } else {
+                                $reflFieldValue = $this->initRelatedCollection($parentObject, $parentClass, $relationField, $parentAlias);
+                            }
 
-                        $indexExists  = isset($this->identifierMap[$path][$id[$parentAlias]][$id[$dqlAlias]]);
-                        $index        = $indexExists ? $this->identifierMap[$path][$id[$parentAlias]][$id[$dqlAlias]] : false;
-                        $indexIsValid = $index !== false ? isset($reflFieldValue[$index]) : false;
-
-                        if (! $indexExists || ! $indexIsValid) {
-                            if (isset($this->existingCollections[$collKey])) {
-                                // Collection exists, only look for the element in the identity map.
-                                $element = $this->getEntityFromIdentityMap($entityName, $rowData['ids'][$dqlAlias]);
-                                if ($element) {
-                                    $resultPointers[$dqlAlias] = $element;
-                                } else {
-                                    unset($resultPointers[$dqlAlias]);
-                                }
+                            if (isset($this->identifierMap[$path][$id[$parentAlias]][$id[$dqlAlias]])) {
+                                $element = $reflFieldValue[$this->identifierMap[$path][$id[$parentAlias]][$id[$dqlAlias]]];
                             } else {
                                 $element = $this->getEntity($row, $rowData, $dqlAlias);
 
                                 if (isset($resultSetMapping->indexByMap[$dqlAlias])) {
                                     $indexValue = $row[$resultSetMapping->indexByMap[$dqlAlias]];
-                                    $reflFieldValue->hydrateSet($indexValue, $element);
-                                    $this->identifierMap[$path][$id[$parentAlias]][$id[$dqlAlias]] = $indexValue;
+                                } elseif (isset($this->identifierMap[$path][$id[$parentAlias]])) {
+                                    $indexValue = end($this->identifierMap[$path][$id[$parentAlias]]) + 1;
                                 } else {
-                                    if (! $reflFieldValue->contains($element)) {
-                                        $reflFieldValue->hydrateAdd($element);
-                                        $reflFieldValue->last();
-                                    }
-
-                                    $this->identifierMap[$path][$id[$parentAlias]][$id[$dqlAlias]] = $reflFieldValue->key();
+                                    $indexValue = 0;
                                 }
 
-                                // Update result pointer
-                                $resultPointers[$dqlAlias] = $element;
+                                $reflFieldValue->hydrateSet($indexValue, $element);
+                                $this->identifierMap[$path][$id[$parentAlias]][$id[$dqlAlias]] = $indexValue;
                             }
-                        } else {
-                            // Update result pointer
-                            $resultPointers[$dqlAlias] = $reflFieldValue[$index];
                         }
+
+                        // Update result pointer
+                        $resultPointers[$dqlAlias] = $element;
                     } elseif (! ($reflFieldValue = $reflField->getValue($parentObject))) {
                         $this->initRelatedCollection($parentObject, $parentClass, $relationField, $parentAlias);
                     } elseif ($reflFieldValue instanceof PersistentCollection && $reflFieldValue->isInitialized() === false && ! isset($this->uninitializedCollections[$oid . $relationField])) {
